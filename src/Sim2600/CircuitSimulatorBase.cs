@@ -1,0 +1,573 @@
+﻿using System.Collections;
+using System.Diagnostics;
+
+namespace Sim2600;
+
+public abstract class CircuitSimulatorBase
+{
+    public string Name { get; set; }
+
+    private Wire[] _wires;
+    private NmosFet[] _transistors;
+    private readonly Dictionary<string, int> _wireNames = [];
+    public int HalfClkCount;
+    private bool[] _recalcArray;
+    private bool[] _newRecalcArray;
+    private int[] _recalcOrder;
+    private int[] _newRecalcOrder;
+    private int _newLastRecalcOrder;
+    private int _lastRecalcOrder;
+    private int _vccWireIndex;
+    private int _gndWireIndex;
+    private int[] _lastWireGroupState;
+
+    private int _lastChipGroupState = 0;
+    private int[] _groupList;
+    private int _groupListLastIndex = 0;
+    private int _groupValue;
+
+    protected CircuitSimulatorBase()
+    {
+
+    }
+
+    public int GetWireIndex(string wireName) => _wireNames[wireName];
+
+    protected void RecalcNamedWire(string wireName) => RecalcWireList([GetWireIndex(wireName)]);
+
+    public void RecalcWireNameList(params string[] wireNames)
+    {
+        RecalcWireList(wireNames.Select(GetWireIndex));
+    }
+
+    protected void RecalcAllWires()
+    {
+        var wireIndices = new List<int>(_wires.Length);
+        for (var i = 0; i < _wires.Length; i++)
+        {
+            if (_wires[i] != null)
+            {
+                wireIndices.Add(i);
+            }
+        }
+        RecalcWireList(wireIndices);
+    }
+
+    private void PrepForRecalc()
+    {
+        if (_recalcArray == null)
+        {
+            var recalcCap = _transistors.Length;
+            _recalcArray = new bool[recalcCap];
+            _recalcOrder = new int[recalcCap];
+            _newRecalcArray = new bool[recalcCap];
+            _newRecalcOrder = new int[recalcCap];
+        }
+
+        _newLastRecalcOrder = 0;
+        _lastRecalcOrder = 0;
+    }
+
+    public void RecalcWireList(IEnumerable<int> nwireList)
+    {
+        PrepForRecalc();
+
+        foreach (var wireIndex in nwireList)
+        {
+            // recalcOrder is a list of wire indices.  self.lastRecalcOrder
+            // marks the last index into this list that we should recalculate.
+            // recalcArray has entries for all wires and is used to mark
+            // which wires need to be recalcualted.
+            _recalcOrder[_lastRecalcOrder++] = wireIndex;
+            _recalcArray[wireIndex] = true;
+        }
+
+        DoRecalcIterations();
+    }
+
+    public void RecalcWire(int wireIndex)
+    {
+        PrepForRecalc();
+
+        _recalcOrder[_lastRecalcOrder++] = wireIndex;
+        _recalcArray[wireIndex] = true;
+
+        DoRecalcIterations();
+    }
+
+    private void DoRecalcIterations()
+    {
+        // Simulation is not allowed to try more than 'stepLimit' 
+        // iterations.  If it doesn't converge by then, raise an 
+        // exception.
+        var step = 0;
+        const int stepLimit = 400;
+
+        while (step < stepLimit)
+        {
+            if (_lastRecalcOrder == 0)
+            {
+                break;
+            }
+
+            var i = 0;
+            while (i < _lastRecalcOrder)
+            {
+                var wireIndex = _recalcOrder[i];
+                _newRecalcArray[wireIndex] = false;
+
+                DoWireRecalc(wireIndex);
+
+                _recalcArray[wireIndex] = false;
+                i++;
+            }
+
+            var tmp = _recalcArray;
+            _recalcArray = _newRecalcArray;
+            _newRecalcArray = tmp;
+
+            var tmp2 = _recalcOrder;
+            _recalcOrder = _newRecalcOrder;
+            _newRecalcOrder = tmp2;
+
+            _lastRecalcOrder = _newLastRecalcOrder;
+            _newLastRecalcOrder = 0;
+
+            step++;
+        }
+
+        // The first attempt to compute the state of a chip's circuit
+        // may not converge, but it's enough to settle the chip into
+        // a reasonable state so that when input and clock pulses are
+        // applied, the simulation will converge.
+        if (step >= stepLimit)
+        {
+            // Don't raise an exception if this is the first attempt
+            // to compute the state of a chip, but raise an exception if
+            // the simulation doesn't converge any time other than that.
+            if (HalfClkCount > 0)
+            {
+                throw new Exception($"Simulation {Name} did not converge after {stepLimit} iterations");
+            }
+        }
+
+        // Check that we've properly reset the recalcArray.  All entries
+        // should be zero in preparation for the next half clock cycle.
+        // Only do this sanity check for the first clock cycles.
+        if (HalfClkCount < 20)
+        {
+            var needNewArray = false;
+            foreach (var recalc in _recalcArray)
+            {
+                if (recalc)
+                {
+                    needNewArray = true;
+                    if (step < stepLimit)
+                    {
+                        throw new Exception($"At halfclk {HalfClkCount} after {step} iterations an entry in recalcArray is not False at the end of an update");
+                    }
+                }
+            }
+            if (needNewArray)
+            {
+                _recalcArray = new bool[_recalcArray.Length];
+            }
+        }
+    }
+
+    private void DoWireRecalc(int wireIndex)
+    {
+        if (wireIndex == _gndWireIndex || wireIndex == _vccWireIndex)
+        {
+            return;
+        }
+
+        _lastChipGroupState++;
+        _groupListLastIndex = 0;
+        _groupValue = 0;
+
+        AddWireToGroupList(wireIndex);
+
+        var newValue = _wires[_groupList[0]].State;
+
+        if ((_groupValue & Wire.GROUNDED) != 0)
+        {
+            newValue = Wire.GROUNDED;
+        }
+        else if ((_groupValue & Wire.HIGH) != 0)
+        {
+            newValue = Wire.HIGH;
+        }
+        else if ((_groupValue & Wire.PULLED_LOW) != 0)
+        {
+            newValue = Wire.PULLED_LOW;
+        }
+        else if ((_groupValue & Wire.PULLED_HIGH) != 0)
+        {
+            newValue = Wire.PULLED_HIGH;
+        }
+        else if ((_groupValue & Wire.FLOATING_LOW) != 0 && (_groupValue & Wire.FLOATING_HIGH) != 0)
+        {
+            newValue = CountWireSizes();
+        }
+        else if ((_groupValue & Wire.FLOATING_LOW) != 0)
+        {
+            newValue = Wire.FLOATING_LOW;
+        }
+        else if ((_groupValue & Wire.FLOATING_HIGH) != 0)
+        {
+            newValue = Wire.FLOATING_HIGH;
+        }
+
+        var newHigh = newValue == Wire.HIGH || newValue == Wire.PULLED_HIGH  || newValue == Wire.FLOATING_HIGH;
+
+        for (var i = 0; i < _groupListLastIndex; i++)
+        {
+            var index = _groupList[i];
+
+            if (index == _gndWireIndex || index == _vccWireIndex)
+            {
+                continue;
+            }
+
+            var simWire = _wires[index];
+            simWire.State = newValue;
+
+            // Turn on or off the transistor gates controlled by this wire
+            if (newHigh)
+            {
+                foreach (var transIndex in simWire.GateIndices)
+                {
+                    var transistor = _transistors[transIndex];
+                    if (transistor.GateState == NmosFet.GATE_LOW)
+                    {
+                        TurnTransistorOn(transistor);
+                    }
+                }
+            }
+            else
+            {
+                foreach (var transIndex in simWire.GateIndices)
+                {
+                    var transistor = _transistors[transIndex];
+                    if (transistor.GateState == NmosFet.GATE_HIGH)
+                    {
+                        TurnTransistorOff(transistor);
+                    }
+                }
+            }
+        }
+    }
+
+    private void TurnTransistorOn(NmosFet transistor)
+    {
+        transistor.GateState = NmosFet.GATE_HIGH;
+
+        var wireInd = transistor.Side1WireIndex;
+        if (!_newRecalcArray[wireInd])
+        {
+            _newRecalcArray[wireInd] = true;
+            _newRecalcOrder[_newLastRecalcOrder++] = wireInd;
+            _lastChipGroupState++;
+        }
+
+        wireInd = transistor.Side2WireIndex;
+        if (!_newRecalcArray[wireInd])
+        {
+            _newRecalcArray[wireInd] = true;
+            _newRecalcOrder[_newLastRecalcOrder++] = wireInd;
+            _lastChipGroupState++;
+        }
+    }
+
+    private void TurnTransistorOff(NmosFet transistor)
+    {
+        transistor.GateState = NmosFet.GATE_LOW;
+
+        var c1Wire = transistor.Side1WireIndex;
+        var c2Wire = transistor.Side2WireIndex;
+
+        FloatWire(c1Wire);
+        FloatWire(c2Wire);
+
+        var wireInd = transistor.Side1WireIndex;
+        if (!_newRecalcArray[wireInd])
+        {
+            _newRecalcArray[wireInd] = true;
+            _newRecalcOrder[_newLastRecalcOrder++] = wireInd;
+            _lastChipGroupState++;
+        }
+
+        wireInd = transistor.Side2WireIndex;
+        if (!_newRecalcArray[wireInd])
+        {
+            _newRecalcArray[wireInd] = true;
+            _newRecalcOrder[_newLastRecalcOrder++] = wireInd;
+            _lastChipGroupState++;
+        }
+    }
+
+    private void AddWireToGroupList(int wireIndex)
+    {
+        // Do nothing if we've already added the wire to the group.
+        if (_lastWireGroupState[wireIndex] == _lastChipGroupState)
+        {
+            return;
+        }
+
+        _groupList[_groupListLastIndex++] = wireIndex;
+        _lastWireGroupState[wireIndex] = _lastChipGroupState;
+
+        if (wireIndex == _gndWireIndex)
+        {
+            _groupValue |= Wire.GROUNDED;
+            return;
+        }
+        else if (wireIndex == _vccWireIndex)
+        {
+            _groupValue |= Wire.HIGH;
+            return;
+        }
+
+        var wire = _wires[wireIndex];
+
+        // Wire.Pulled is 0, 1, or 2
+        _groupValue |= wire.Pulled;
+
+        if (wire.State == Wire.FLOATING_LOW)
+        {
+            _groupValue |= Wire.FLOATING_LOW;
+        }
+        else if (wire.State == Wire.FLOATING_HIGH)
+        {
+            _groupValue |= Wire.FLOATING_HIGH;
+        }
+
+        foreach (var transIndex in wire.CTIndices)
+        {
+            // If the transistor at index 't' is on, add the
+            // wires of the circuit on the other side of the 
+            // transistor, since wireIndex is connected to them.
+            var other = -1;
+            var trans = _transistors[transIndex];
+            if (trans.GateState == NmosFet.GATE_LOW)
+            {
+                continue;
+            }
+
+            if (trans.Side1WireIndex == wireIndex)
+            {
+                other = trans.Side2WireIndex;
+            }
+            else if (trans.Side2WireIndex == wireIndex)
+            {
+                other = trans.Side1WireIndex;
+            }
+
+            // No need to check if 'other' is already in the groupList:
+            // self.groupList[0:self.groupListLastIndex]
+            // That's done in the first line of addWireToGroupList()
+            AddWireToGroupList(other);
+        }
+    }
+
+    private byte CountWireSizes()
+    {
+        var countFloatingLow = 0;
+        var countFloatingHigh = 0;
+
+        for (var i = 0; i < _groupListLastIndex; i++)
+        {
+            var wire = _wires[_groupList[i]];
+
+            var num = wire.CTIndices.Length + wire.GateIndices.Length;
+            if (wire.State == Wire.FLOATING_LOW)
+            {
+                countFloatingLow += num;
+            }
+            else if (wire.State == Wire.FLOATING_HIGH)
+            {
+                countFloatingHigh += num;
+            }
+        }
+
+        if (countFloatingHigh < countFloatingLow)
+        {
+            return Wire.FLOATING_LOW;
+        }
+
+        return Wire.FLOATING_HIGH;
+    }
+
+    protected void FloatWire(int n)
+    {
+        var wire = _wires[n];
+
+        if (wire.Pulled == Wire.PULLED_HIGH)
+        {
+            wire.State = Wire.PULLED_HIGH;
+        }
+        else if (wire.Pulled == Wire.PULLED_LOW)
+        {
+            wire.State = Wire.PULLED_LOW;
+        }
+        else
+        {
+            var state = wire.State;
+            if (state == Wire.GROUNDED || state == Wire.PULLED_LOW)
+            {
+                wire.State = Wire.FLOATING_LOW;
+            }
+            if (state == Wire.HIGH || state == Wire.PULLED_HIGH)
+            {
+                wire.State = Wire.FLOATING_HIGH;
+            }
+        }
+    }
+
+    // setHighWN() and setLowWN() do not trigger an update
+    // of the simulation.
+    protected void SetHighWN(string n)
+    {
+        var wireIndex = _wireNames[n];
+        _wires[wireIndex].SetHigh();
+    }
+
+    protected void SetLowWN(string n)
+    {
+        var wireIndex = _wireNames[n];
+        _wires[wireIndex].SetLow();
+    }
+
+    public void SetHigh(int wireIndex)
+    {
+        _wires[wireIndex].SetPulledHighOrLow(true);
+    }
+
+    public void SetLow(int wireIndex)
+    {
+        _wires[wireIndex].SetPulledHighOrLow(false);
+    }
+
+    public void SetPulled(int wireIndex, bool high)
+    {
+        _wires[wireIndex].SetPulledHighOrLow(high);
+    }
+
+    public void SetPulledHigh(int wireIndex)
+    {
+        _wires[wireIndex].SetPulledHighOrLow(true);
+    }
+
+    public void SetPulledLow(int wireIndex)
+    {
+        _wires[wireIndex].SetPulledHighOrLow(false);
+    }
+
+    public bool IsHigh(int wireIndex) => _wires[wireIndex].IsHigh();
+
+    public bool IsLow(int wireIndex) => _wires[wireIndex].IsLow();
+
+    public bool IsHighWN(string n) => _wires[_wireNames[n]].IsHigh();
+
+    public bool IsLowWN(string n) => _wires[_wireNames[n]].IsLow();
+
+    protected void LoadCircuit(string filePath)
+    {
+        var unpickler = new Razorvine.Pickle.Unpickler();
+
+        using var fileStream = File.OpenRead(filePath);
+
+        var rootObj = (Hashtable)unpickler.load(fileStream);
+
+        var numWires = (int)rootObj["NUM_WIRES"];
+        var nextCtrl = (int)rootObj["NEXT_CTRL"];
+        var noWire = (int)rootObj["NO_WIRE"];
+        var wirePulled = (byte[])rootObj["WIRE_PULLED"];
+        var wireCtrlFets = (int[])rootObj["WIRE_CTRL_FETS"];
+        var wireGates = (int[])rootObj["WIRE_GATES"];
+        var wireNames = (ArrayList)rootObj["WIRE_NAMES"];
+        var numFets = (int)rootObj["NUM_FETS"];
+        var fetSide1WireInds = (int[])rootObj["FET_SIDE1_WIRE_INDS"];
+        var fetSide2WireInds = (int[])rootObj["FET_SIDE2_WIRE_INDS"];
+        var fetGateWireInds = (int[])rootObj["FET_GATE_INDS"];
+
+        Debug.Assert(wirePulled.Length == numWires);
+        Debug.Assert(wireNames.Count == numWires);
+        Debug.Assert(fetSide1WireInds.Length == numFets);
+        Debug.Assert(fetSide2WireInds.Length == numFets);
+        Debug.Assert(fetGateWireInds.Length == numFets);
+
+        _wires = new Wire[numWires];
+
+        var wcfi = 0;
+        var wgi = 0;
+        for (var i = 0; i < numWires; i++)
+        {
+            var numControlFets = wireCtrlFets[wcfi++];
+            var controlFets = new HashSet<int>();
+
+            for (var n = 0; n < numControlFets; n++)
+            {
+                controlFets.Add(wireCtrlFets[wcfi++]);
+            }
+
+            var tok = wireCtrlFets[wcfi++];
+            Debug.Assert(tok == nextCtrl);
+
+            var numGates = wireGates[wgi++];
+            var gates = new HashSet<int>();
+            for (var n = 0; n < numGates; n++)
+            {
+                gates.Add(wireGates[wgi++]);
+            }
+
+            tok = wireGates[wgi++];
+            Debug.Assert(tok == nextCtrl);
+
+            if (wireCtrlFets.Length == 0 && gates.Count == 0)
+            {
+                Debug.Assert(wireNames[i] == "");
+            }
+            else
+            {
+                _wires[i] = new Wire(i, (string)wireNames[i], controlFets.ToArray(), gates.ToArray(), wirePulled[i]);
+                _wireNames[(string)wireNames[i]] = i;
+            }
+        }
+
+        _transistors = new NmosFet[numFets];
+
+        for (var i = 0; i < numFets; i++)
+        {
+            var s1 = fetSide1WireInds[i];
+            var s2 = fetSide2WireInds[i];
+            var gate = fetGateWireInds[i];
+
+            if (s1 == noWire)
+            {
+                Debug.Assert(s2 == noWire);
+                Debug.Assert(gate == noWire);
+            }
+            else
+            {
+                _transistors[i] = new NmosFet(i, s1, s2, gate);
+            }
+        }
+
+        _vccWireIndex = _wireNames["VCC"];
+        _gndWireIndex = _wireNames["VSS"];
+
+        _wires[_vccWireIndex].State = Wire.HIGH;
+        _wires[_gndWireIndex].State = Wire.GROUNDED;
+
+        foreach (var transInd in _wires[_vccWireIndex].GateIndices)
+        {
+            _transistors[transInd].GateState = NmosFet.GATE_HIGH;
+        }
+
+        _lastWireGroupState = new int[numWires];
+
+        _groupList = new int[_wires.Length];
+    }
+}
