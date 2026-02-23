@@ -5,7 +5,7 @@
         <Nullable>enable</Nullable>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
-        <TestRomFolder>$(ProjectDir)Assets\Roms</TestRomFolder>
+        <TestRomFolder>$(ProjectDir)Assets/Roms</TestRomFolder>
         <TestRomFileName>Pitfall.bin</TestRomFileName>
     </PropertyGroup>
 
@@ -23,8 +23,9 @@
 
     <Target Name="DownloadTestRom"
             BeforeTargets="PrepareForBuild"
-            Condition="!Exists('$(TestRomFolder)\$(TestRomFileName)')">
-        <DownloadFile SourceUrl="https://github.com/gregjames/Sim2600/raw/refs/heads/master/roms/Pitfall.bin" 
+            Condition="!Exists('$(TestRomFolder)/$(TestRomFileName)')">
+		<Message Importance="high" Text="Downloading test ROM from GitHub..." />
+		<DownloadFile SourceUrl="https://github.com/gregjames/Sim2600/raw/refs/heads/master/roms/Pitfall.bin" 
                       DestinationFolder="$(TestRomFolder)"
                       DestinationFileName="$(TestRomFileName)" />
     </Target>
