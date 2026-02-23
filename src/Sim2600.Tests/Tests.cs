@@ -5,10 +5,10 @@ public class Tests
     [Test]
     public async Task StateMatchesExpectedValues()
     {
-        var expectedFilePath = Path.Combine("Assets", "Roms", "ExpectedStates.txt");
+        var expectedFilePath = Path.Combine("Assets", "ExpectedStates.txt");
         const string actualFilePath = "ActualStates.txt";
         {
-            var sim = new Sim2600Console(Path.Combine("Assets", "Pitfall.bin"));
+            var sim = new Sim2600Console(Path.Combine("Assets", "Roms", "Pitfall.bin"));
 
             using var stateWriter = new StreamWriter(actualFilePath);
 
