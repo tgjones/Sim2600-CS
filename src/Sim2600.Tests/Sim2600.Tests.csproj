@@ -5,8 +5,9 @@
         <Nullable>enable</Nullable>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
-        <TestRomFolder>$(ProjectDir)Assets/Roms</TestRomFolder>
+        <TestRomFolder>$(MSBuildProjectDirectory)\Assets\Roms</TestRomFolder>
         <TestRomFileName>Pitfall.bin</TestRomFileName>
+        <TestRomFilePath>$(TestRomFolder)\$(TestRomFileName)</TestRomFilePath>
     </PropertyGroup>
 
     <ItemGroup>
@@ -21,13 +22,15 @@
         <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
-    <Target Name="DownloadTestRom"
-            BeforeTargets="PrepareForBuild"
-            Condition="!Exists('$(TestRomFolder)/$(TestRomFileName)')">
-		<Message Importance="high" Text="Downloading test ROM from GitHub..." />
-		<DownloadFile SourceUrl="https://github.com/gregjames/Sim2600/raw/refs/heads/master/roms/Pitfall.bin" 
-                      DestinationFolder="$(TestRomFolder)"
-                      DestinationFileName="$(TestRomFileName)" />
+    <Target Name="DownloadTestRom" 
+            BeforeTargets="PrepareForBuild" 
+            Condition="!Exists('$(TestRomFilePath)')"
+            Outputs="$(TestRomFilePath)">
+        <Message Importance="high" Text="Downloading test ROM from GitHub..." />
+        <DownloadFile SourceUrl="https://github.com/gregjames/Sim2600/raw/refs/heads/master/roms/Pitfall.bin" 
+                      DestinationFolder="$(TestRomFolder)" 
+                      DestinationFileName="$(TestRomFileName)" 
+                      SkipUnchangedFiles="true" />
     </Target>
 
 </Project>
