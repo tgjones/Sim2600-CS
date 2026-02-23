@@ -1,5 +1,7 @@
 ﻿using System.Collections;
 using System.Diagnostics;
+using System.Numerics;
+using System.Text;
 
 namespace Sim2600;
 
@@ -19,16 +21,111 @@ public abstract class CircuitSimulatorBase
     private int _lastRecalcOrder;
     private int _vccWireIndex;
     private int _gndWireIndex;
-    private int[] _lastWireGroupState;
+    private BigInteger[] _lastWireGroupState;
 
-    private int _lastChipGroupState = 0;
+    private BigInteger _lastChipGroupState = 0;
     private int[] _groupList;
     private int _groupListLastIndex = 0;
     private int _groupValue;
 
-    protected CircuitSimulatorBase()
-    {
+    private ChipLogger _logger;
 
+    public IDisposable BeginLogging(string fileName)
+    {
+        return new ChipLogger(this, fileName);
+    }
+
+    public void SetState(string state)
+    {
+        var index = 0;
+
+        for (var i = 0; i < _wires.Length; i++)
+        {
+            var wire = _wires[i];
+
+            wire.Pulled = state[index++] switch
+            {
+                '_' => 0,
+                'h' => Wire.PULLED_HIGH,
+                'l' => Wire.PULLED_LOW,
+                _ => throw new InvalidOperationException($"Invalid character")
+            };
+
+            wire.State = state[index++] switch
+            {
+                '_' => 0,
+                'h' => Wire.PULLED_HIGH,
+                'l' => Wire.PULLED_LOW,
+                'G' => Wire.GROUNDED,
+                'H' => Wire.HIGH,
+                'F' => Wire.FLOATING_HIGH,
+                'f' => Wire.FLOATING_LOW,
+                'S' => Wire.FLOATING,
+                _ => throw new InvalidOperationException($"Invalid character")
+            };
+        }
+
+        for (var i = 0; i < _transistors.Length; i++)
+        {
+            var transistor = _transistors[i];
+
+            transistor.GateState = state[index++] switch
+            {
+                '-' => NmosFet.GATE_LOW,
+                '~' => NmosFet.GATE_HIGH,
+                _ => throw new InvalidOperationException($"Invalid character")
+            };
+        }
+
+        if (index != state.Length)
+        {
+            throw new InvalidOperationException("State string length does not match the expected length.");
+        }
+    }
+
+    public string GetState()
+    {
+        var result = new StringBuilder(_wires.Length);
+
+        for (var i = 0; i < _wires.Length; i++)
+        {
+            var wire = _wires[i];
+
+            result.Append(wire.Pulled switch
+            {
+                0 => "_",
+                Wire.PULLED_HIGH => "h",
+                Wire.PULLED_LOW => "l",
+                _ => throw new InvalidOperationException()
+            });
+
+            result.Append(wire.State switch
+            {
+                0 => "_",
+                Wire.PULLED_HIGH => "h",
+                Wire.PULLED_LOW => "l",
+                Wire.GROUNDED => "G",
+                Wire.HIGH => "H",
+                Wire.FLOATING_HIGH => "F",
+                Wire.FLOATING_LOW => "f",
+                Wire.FLOATING => "S",
+                _ => throw new InvalidOperationException()
+            });
+        }
+
+        for (var i = 0; i < _transistors.Length; i++)
+        {
+            var transistor = _transistors[i];
+
+            result.Append(transistor.GateState switch
+            {
+                NmosFet.GATE_LOW => "-",
+                NmosFet.GATE_HIGH => "~",
+                _ => throw new InvalidOperationException()
+            });
+        }
+
+        return result.ToString();
     }
 
     public int GetWireIndex(string wireName) => _wireNames[wireName];
@@ -107,8 +204,11 @@ public abstract class CircuitSimulatorBase
         {
             if (_lastRecalcOrder == 0)
             {
+                _logger?.End();
                 break;
             }
+
+            _logger?.BeginIteration(step);
 
             var i = 0;
             while (i < _lastRecalcOrder)
@@ -121,6 +221,8 @@ public abstract class CircuitSimulatorBase
                 _recalcArray[wireIndex] = false;
                 i++;
             }
+
+            _logger?.EndIteration();
 
             var tmp = _recalcArray;
             _recalcArray = _newRecalcArray;
@@ -142,6 +244,8 @@ public abstract class CircuitSimulatorBase
         // applied, the simulation will converge.
         if (step >= stepLimit)
         {
+            _logger?.End();
+
             // Don't raise an exception if this is the first attempt
             // to compute the state of a chip, but raise an exception if
             // the simulation doesn't converge any time other than that.
@@ -182,6 +286,8 @@ public abstract class CircuitSimulatorBase
             return;
         }
 
+        _logger?.BeginRecalcNode(wireIndex);
+
         _lastChipGroupState++;
         _groupListLastIndex = 0;
         _groupValue = 0;
@@ -221,6 +327,8 @@ public abstract class CircuitSimulatorBase
 
         var newHigh = newValue == Wire.HIGH || newValue == Wire.PULLED_HIGH  || newValue == Wire.FLOATING_HIGH;
 
+        _logger?.SetGroupState(_groupValue, newValue);
+
         for (var i = 0; i < _groupListLastIndex; i++)
         {
             var index = _groupList[i];
@@ -243,6 +351,10 @@ public abstract class CircuitSimulatorBase
                     {
                         TurnTransistorOn(transistor);
                     }
+                    else
+                    {
+                        _logger?.AddUnaffectedTransistor(transistor);
+                    }
                 }
             }
             else
@@ -254,13 +366,21 @@ public abstract class CircuitSimulatorBase
                     {
                         TurnTransistorOff(transistor);
                     }
+                    else
+                    {
+                        _logger?.AddUnaffectedTransistor(transistor);
+                    }
                 }
             }
         }
+
+        _logger?.EndRecalcNode();
     }
 
     private void TurnTransistorOn(NmosFet transistor)
     {
+        _logger?.AddAffectedTransistor(transistor, true);
+
         transistor.GateState = NmosFet.GATE_HIGH;
 
         var wireInd = transistor.Side1WireIndex;
@@ -282,6 +402,8 @@ public abstract class CircuitSimulatorBase
 
     private void TurnTransistorOff(NmosFet transistor)
     {
+        _logger?.AddAffectedTransistor(transistor, false);
+
         transistor.GateState = NmosFet.GATE_LOW;
 
         var c1Wire = transistor.Side1WireIndex;
@@ -309,6 +431,8 @@ public abstract class CircuitSimulatorBase
 
     private void AddWireToGroupList(int wireIndex)
     {
+        _logger?.AddNodeToGroup(wireIndex, _wires[wireIndex].State);
+
         // Do nothing if we've already added the wire to the group.
         if (_lastWireGroupState[wireIndex] == _lastChipGroupState)
         {
@@ -505,21 +629,25 @@ public abstract class CircuitSimulatorBase
         for (var i = 0; i < numWires; i++)
         {
             var numControlFets = wireCtrlFets[wcfi++];
-            var controlFets = new HashSet<int>();
+            var controlFets = new List<int>();
 
             for (var n = 0; n < numControlFets; n++)
             {
-                controlFets.Add(wireCtrlFets[wcfi++]);
+                if (!controlFets.Contains(wireCtrlFets[wcfi]))
+                    controlFets.Add(wireCtrlFets[wcfi]);
+                wcfi++;
             }
 
             var tok = wireCtrlFets[wcfi++];
             Debug.Assert(tok == nextCtrl);
 
             var numGates = wireGates[wgi++];
-            var gates = new HashSet<int>();
+            var gates = new List<int>();
             for (var n = 0; n < numGates; n++)
             {
-                gates.Add(wireGates[wgi++]);
+                if (!gates.Contains(wireGates[wgi]))
+                    gates.Add(wireGates[wgi]);
+                wgi++;
             }
 
             tok = wireGates[wgi++];
@@ -566,8 +694,180 @@ public abstract class CircuitSimulatorBase
             _transistors[transInd].GateState = NmosFet.GATE_HIGH;
         }
 
-        _lastWireGroupState = new int[numWires];
+        _lastWireGroupState = new BigInteger[numWires];
 
         _groupList = new int[_wires.Length];
+    }
+
+    private sealed class ChipLogger : IDisposable
+    {
+        private readonly CircuitSimulatorBase _chipSimulator;
+        private readonly StreamWriter _streamWriter;
+
+        private readonly List<int> _nodes = new();
+        private readonly List<RecalcNodesIteration> _iterations = new();
+        private RecalcNodesIteration? _currentIteration;
+        private RecalcNode? _currentRecalcNode;
+        private int? _nextNodeTransistorGate;
+
+        private int _indentLevel;
+
+        public ChipLogger(CircuitSimulatorBase chipSimulator, string filePath)
+        {
+            _chipSimulator = chipSimulator;
+            _streamWriter = new StreamWriter(filePath);
+
+            chipSimulator._logger = this;
+        }
+
+        public void Begin() { }
+
+        public void BeginIteration(int iteration)
+        {
+            _currentIteration = new RecalcNodesIteration(iteration);
+        }
+
+        public void BeginRecalcNode(int nodeId)
+        {
+            _currentRecalcNode = new RecalcNode(nodeId);
+        }
+
+        public void AddNodeToGroup(int nodeId, int currentValue)
+        {
+            if (!_currentRecalcNode!.Group.Any(x => x.Item1 == nodeId))
+            {
+                _currentRecalcNode!.Group.Add((nodeId, _nextNodeTransistorGate, currentValue));
+            }
+        }
+
+        public void SetNextNodeTransistorGate(int? gate)
+        {
+            _nextNodeTransistorGate = gate;
+        }
+
+        public void SetGroupState(int currentGroupState, int newGroupState)
+        {
+            _currentRecalcNode!.CurrentGroupState = currentGroupState;
+            _currentRecalcNode!.NewGroupState = newGroupState;
+        }
+
+        public void AddAffectedTransistor(NmosFet transistor, bool turnedOn)
+        {
+            _currentRecalcNode!.AffectedTransistors.Add((transistor, turnedOn));
+        }
+
+        public void AddUnaffectedTransistor(NmosFet transistor)
+        {
+            _currentRecalcNode!.UnaffectedTransistors.Add(transistor);
+        }
+
+        public void EndRecalcNode()
+        {
+            _currentIteration!.RecalcNodes.Add(_currentRecalcNode!);
+            _currentRecalcNode = null;
+        }
+
+        public void EndIteration()
+        {
+            _iterations.Add(_currentIteration!);
+            _currentIteration = null;
+        }
+
+        public void End()
+        {
+            // Search backwards through iterations for everything that affected _nodeToTrace
+
+            List<RecalcNodesIteration> filteredIterations = _iterations;
+
+            // Write it to log.
+
+            foreach (var iteration in filteredIterations)
+            {
+                WriteLine($"Iteration {iteration.Iteration}");
+                PushIndentLevel();
+                foreach (var recalcNode in iteration.RecalcNodes)
+                {
+                    WriteLine($"Recalc Node {GetNodeName(recalcNode.NodeId)}:");
+                    PushIndentLevel();
+
+                    WriteLine($"Group Nodes:");
+                    PushIndentLevel();
+                    foreach (var (groupNodeId, viaGateId, groupNodeValue) in recalcNode.Group)
+                    {
+                        var transistorGateSuffix = viaGateId != null ? $" (via transistor gate {GetNodeName(viaGateId.Value)})" : "";
+                        WriteLine($"- {GetNodeName(groupNodeId)}: {groupNodeValue}{transistorGateSuffix}");
+                    }
+                    PopIndentLevel();
+
+                    WriteLine($"Current Group State: {recalcNode.CurrentGroupState}");
+                    WriteLine($"New Group State:     {recalcNode.NewGroupState}");
+
+                    WriteLine("Unaffected Transistors:");
+                    PushIndentLevel();
+                    foreach (var transistor in recalcNode.UnaffectedTransistors)
+                    {
+                        WriteLine($"- Transistor: {transistor.ToDisplayString()}");
+                    }
+                    PopIndentLevel();
+
+                    WriteLine("Affected Transistors:");
+                    PushIndentLevel();
+                    foreach (var affectedTransistor in recalcNode.AffectedTransistors)
+                    {
+                        var (transistor, turnedOn) = affectedTransistor;
+                        WriteLine($"- Transistor {(turnedOn ? "On" : "Off")}: {transistor.ToDisplayString()}");
+                    }
+                    PopIndentLevel();
+
+                    PopIndentLevel();
+                }
+                PopIndentLevel();
+            }
+
+            WriteLine("****************");
+
+            _streamWriter.Flush();
+
+            _iterations.Clear();
+            _nodes.Clear();
+        }
+
+        private string GetNodeName(int nodeId)
+        {
+            return nodeId.ToString();
+        }
+
+        private void WriteLine(string line)
+        {
+            _streamWriter.WriteLine(new string(' ', _indentLevel * 4) + line);
+        }
+
+        private void PushIndentLevel() => _indentLevel++;
+
+        private void PopIndentLevel() => _indentLevel--;
+
+        public void Dispose()
+        {
+            _streamWriter.Flush();
+            _streamWriter.Dispose();
+            _chipSimulator._logger = null;
+        }
+
+        private sealed class RecalcNodesIteration(int iteration)
+        {
+            public List<RecalcNode> RecalcNodes = [];
+
+            public int Iteration => iteration;
+        }
+
+        private sealed class RecalcNode(int nodeId)
+        {
+            public int NodeId => nodeId;
+            public List<(int, int?, int)> Group { get; } = [];
+            public int CurrentGroupState { get; set; }
+            public int NewGroupState { get; set; }
+            public List<(NmosFet, bool)> AffectedTransistors { get; } = [];
+            public List<NmosFet> UnaffectedTransistors { get; } = [];
+        }
     }
 }

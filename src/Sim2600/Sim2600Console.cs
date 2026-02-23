@@ -2,24 +2,26 @@
 
 public sealed class Sim2600Console
 {
-    private readonly Sim6502 _sim6507 = new();
+    public readonly Sim6502 Sim6507 = new();
     public readonly SimTIA SimTIA = new();
-    private readonly EmuPIA _emuPIA = new();
+    public readonly EmuPIA EmuPIA = new();
+
+    public int HalfClkCount { get; private set; }
 
     private byte[] _rom = new byte[4096];
-    private int _bankSwitchROMOffset;
+    public int BankSwitchROMOffset;
     private int _programLen;
 
     public Sim2600Console(string romFilePath)
     {
         LoadProgram(romFilePath);
-        _sim6507.ResetChip();
+        Sim6507.ResetChip();
 
         // The 6507's IRQ and NMI are connected to the supply voltage
         // Setting them to 'pulled high' will keep them high.
-        _sim6507.SetPulledHigh(_sim6507.GetWireIndex("IRQ"));
-        _sim6507.SetPulledHigh(_sim6507.GetWireIndex("NMI"));
-        _sim6507.RecalcWireNameList(["IRQ", "NMI"]);
+        Sim6507.SetPulledHigh(Sim6507.GetWireIndex("IRQ"));
+        Sim6507.SetPulledHigh(Sim6507.GetWireIndex("NMI"));
+        Sim6507.RecalcWireNameList(["IRQ", "NMI"]);
 
         // TIA CS1 is always high.  !CS2 is always grounded
         SimTIA.SetPulledHigh(SimTIA.GetWireIndex("CS1"));
@@ -60,15 +62,15 @@ public sealed class Sim2600Console
         byte data = 0;
         if ((addr >= 0x80 && addr <= 0xFF) || (addr >= 0x180 && addr <= 0x1FF))
         {
-            data = _emuPIA.Ram[(addr & 0xFF) - 0x80];
+            data = EmuPIA.Ram[(addr & 0xFF) - 0x80];
         }
         else if (addr >= 0x0280 && addr <= 0x0297)
         {
-            data = _emuPIA.Iot[addr - 0x0280];
+            data = EmuPIA.Iot[addr - 0x0280];
         }
         else if (addr >= 0xF000 || (addr >= 0xD000 && addr <= 0xDFFF && _programLen == 8192))
         {
-            data = _rom[addr - 0xF000 + _bankSwitchROMOffset];
+            data = _rom[addr - 0xF000 + BankSwitchROMOffset];
         }
         else if (addr >= 0x30 && addr <= 0x3D)
         {
@@ -81,7 +83,7 @@ public sealed class Sim2600Console
         {
             // This happens all the time, usually at startup when
             // setting data at all writeable addresses to 0.
-            Console.WriteLine($"CURIOUS: Attempt to read from TIA write-only address 0x{addr:X4}");
+            //Console.WriteLine($"CURIOUS: Attempt to read from TIA write-only address 0x{addr:X4}");
         }
         else
         {
@@ -92,7 +94,7 @@ public sealed class Sim2600Console
             Console.WriteLine($"WARNING: Unhandled address in readMemory: 0x{addr:X4}");
         }
 
-        var cpu = _sim6507;
+        var cpu = Sim6507;
         var tia = SimTIA;
 
         if (cpu.IsHigh(cpu.PadIndSYNC))
@@ -138,9 +140,9 @@ public sealed class Sim2600Console
 
     private void WriteMemory(ushort address, byte byteValue, bool setup = false)
     {
-        var cpu = _sim6507;
+        var cpu = Sim6507;
         var tia = SimTIA;
-        var pia = _emuPIA;
+        var pia = EmuPIA;
 
         if (cpu.IsLow(cpu.PadReset) && !setup)
         {
@@ -155,11 +157,11 @@ public sealed class Sim2600Console
                 if (address == 0xFFF9)
                 {
                     // Switch to bank 0 which starts at 0xD0000
-                    _bankSwitchROMOffset = 0x2000;
+                    BankSwitchROMOffset = 0x2000;
                 }
                 else if (address == 0xFFF8)
                 {
-                    _bankSwitchROMOffset = 0x1000;
+                    BankSwitchROMOffset = 0x1000;
                 }
             }
             else
@@ -245,7 +247,7 @@ public sealed class Sim2600Console
         }
         else if (programLen == 8192)
         {
-            _bankSwitchROMOffset = 0x1000;
+            BankSwitchROMOffset = 0x1000;
         }
 
         _rom = new byte[progByteList.Length * romDuplicate];
@@ -302,7 +304,7 @@ public sealed class Sim2600Console
 
     private void UpdateDataBus()
     {
-        var cpu = _sim6507;
+        var cpu = Sim6507;
         var tia = SimTIA;
 
         // transfer 6507 data bus to TIA
@@ -342,9 +344,9 @@ public sealed class Sim2600Console
 
     public void AdvanceOneHalfClock()
     {
-        var cpu = _sim6507;
+        var cpu = Sim6507;
         var tia = SimTIA;
-        var pia = _emuPIA;
+        var pia = EmuPIA;
 
         // Set all TIA inputs to be pulled high.  These aren't updated to
         // reflect any joystick or console switch inputs, but they could be.
@@ -380,13 +382,14 @@ public sealed class Sim2600Console
         // to the corresponding address inputs of the TIA simulation
         for (var i = 0; i < tia.AddressBusPads.Count; i++)
         {
+            var tiaWireIndex = tia.AddressBusPads[i];
             if (cpu.IsHigh(cpu.AddressBusPads[i]))
             {
-                tia.SetHigh(tia.AddressBusPads[i]);
+                tia.SetHigh(tiaWireIndex);
             }
             else
             {
-                tia.SetLow(tia.AddressBusPads[i]);
+                tia.SetLow(tiaWireIndex);
             }
         }
         tia.RecalcWireList(tia.AddressBusPads);
@@ -450,11 +453,10 @@ public sealed class Sim2600Console
                 // (every time the input clock is high, it advances)
                 if (pia.TimerFinished)
                 {
-                    pia.TimerValue--;
-                    if (pia.TimerValue < 0)
+                    if (pia.TimerValue > 0)
                     {
-                        // Assume it doesn't wrap around
-                        pia.TimerValue = 0;
+                        // Assume it doesn't wrap around. When it reaches 0 it just stays there.
+                        pia.TimerValue--;
                     }
                 }
                 else
@@ -463,13 +465,16 @@ public sealed class Sim2600Console
                     if (pia.TimerClockCount >= pia.TimerPeriod)
                     {
                         // decrement interval counter
-                        pia.TimerValue--;
-                        pia.TimerClockCount = 0;
-                        if (pia.TimerValue < 0)
+                        if (pia.TimerValue > 0)
+                        {
+                            pia.TimerValue--;
+                        }
+                        else
                         {
                             pia.TimerFinished = true;
                             pia.TimerValue = 0xFF;
                         }
+                        pia.TimerClockCount = 0;
                     }
                 }
             }
@@ -510,5 +515,18 @@ public sealed class Sim2600Console
                 }
             }
         }
+
+        HalfClkCount++;
+    }
+
+    public void WriteState(StreamWriter writer)
+    {
+        writer.WriteLine($"HalfClocks: {HalfClkCount}");
+        writer.WriteLine($"CPU: {Sim6507.GetState()}");
+        writer.WriteLine($"TIA: {SimTIA.GetState()}");
+        writer.WriteLine($"PIA: {EmuPIA.GetState()}");
+        writer.WriteLine($"Console: {BankSwitchROMOffset}");
+        writer.WriteLine();
+        writer.Flush();
     }
 }

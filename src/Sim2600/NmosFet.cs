@@ -21,4 +21,9 @@ public sealed class NmosFet
 
         GateState = GATE_LOW;
     }
+
+    public string ToDisplayString()
+    {
+        return $"Gate={GateWireIndex} C1={Side1WireIndex} C2={Side2WireIndex}";
+    }
 }

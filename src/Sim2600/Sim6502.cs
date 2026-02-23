@@ -90,7 +90,7 @@ public sealed class Sim6502 : CircuitSimulatorBase
         RecalcWireNameList(["IRQ", "NMI", "RES", "RDY"]);
         for (var i = 0; i < 4; i++)
         {
-            if (i % 2 == 0)
+            if (i % 2 != 0)
             {
                 SetLowWN("CLK0");
             }
