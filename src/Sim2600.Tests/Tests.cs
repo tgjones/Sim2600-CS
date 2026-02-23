@@ -5,6 +5,8 @@ public class Tests
     [Test]
     public async Task StateMatchesExpectedValues()
     {
+        Console.WriteLine("Current directory: " + Environment.CurrentDirectory);
+
         var expectedFilePath = Path.Combine("Assets", "ExpectedStates.txt");
         const string actualFilePath = "ActualStates.txt";
         {
