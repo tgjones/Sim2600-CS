@@ -1,22 +1,32 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup>
-		<ImplicitUsings>enable</ImplicitUsings>
-		<Nullable>enable</Nullable>
-		<OutputType>Exe</OutputType>
-		<TargetFramework>net10.0</TargetFramework>
-	</PropertyGroup>
+    <PropertyGroup>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <TestRomFolder>$(ProjectDir)Assets\Roms</TestRomFolder>
+        <TestRomFileName>Pitfall.bin</TestRomFileName>
+    </PropertyGroup>
 
-	<ItemGroup>
-		<PackageReference Include="TUnit" Version="0.56.50" />
-	</ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="TUnit" Version="0.56.50" />
+    </ItemGroup>
 
-	<ItemGroup>
-		<ProjectReference Include="..\Sim2600\Sim2600.csproj" />
-	</ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Sim2600\Sim2600.csproj" />
+    </ItemGroup>
 
-	<ItemGroup>
-		<Content Include="Assets\*.*" CopyToOutputDirectory="PreserveNewest" />
-	</ItemGroup>
+    <ItemGroup>
+        <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <Target Name="DownloadTestRom"
+            BeforeTargets="PrepareForBuild"
+            Condition="!Exists('$(TestRomFolder)\$(TestRomFileName)')">
+        <DownloadFile SourceUrl="https://github.com/gregjames/Sim2600/raw/refs/heads/master/roms/Pitfall.bin" 
+                      DestinationFolder="$(TestRomFolder)"
+                      DestinationFileName="$(TestRomFileName)" />
+    </Target>
 
 </Project>

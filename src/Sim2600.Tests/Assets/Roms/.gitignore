@@ -1,0 +1,2 @@
+# Ignore test ROMs. They're downloaded as part of the build.
+*.bin
