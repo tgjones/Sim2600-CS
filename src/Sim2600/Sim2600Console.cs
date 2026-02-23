@@ -129,7 +129,7 @@ public sealed class Sim2600Console
 
         if ((addr & 0x200) != 0 && addr < 0x2FF)
         {
-            Console.WriteLine($"6507 READ [0x{addr:X4}]: 0x{data:X2}");
+            //Console.WriteLine($"6507 READ [0x{addr:X4}]: 0x{data:X2}");
         }
 
         cpu.DataBusValue = data;
@@ -188,7 +188,7 @@ public sealed class Sim2600Console
 
         if (address < 0x280)
         {
-            Console.WriteLine($"6507 WRITE to [0x{address:X4}]: 0x{byteValue:X2}  at 6507 halfclock {cpu.HalfClkCount}");
+            //Console.WriteLine($"6507 WRITE to [0x{address:X4}]: 0x{byteValue:X2}  at 6507 halfclock {cpu.HalfClkCount}");
         }
 
         if ((address >= 0x80 && address <= 0xFF) || (address >= 0x180 && address <= 0x1FF))
