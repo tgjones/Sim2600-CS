@@ -31,8 +31,11 @@
                       DestinationFolder="$(TestRomFolder)"
                       DestinationFileName="$(TestRomFileName)"
                       SkipUnchangedFiles="true">
-			<Output TaskParameter="DownloadedFile" ItemName="Content" />
+			<Output TaskParameter="DownloadedFile" ItemName="DownloadedTestRoms" />
 		</DownloadFile>
+		<ItemGroup>
+			<Content Include="@(DownloadedTestRoms)" CopyToOutputDirectory="PreserveNewest" />
+		</ItemGroup>
     </Target>
 
 </Project>
