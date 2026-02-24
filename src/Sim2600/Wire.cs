@@ -6,7 +6,6 @@ public sealed class Wire
     public const byte PULLED_LOW = 1 << 1;    // 2
     public const byte FLOATING_HIGH = 1 << 4; // 16
     public const byte FLOATING_LOW = 1 << 5;  // 32
-    public const byte FLOATING = 1 << 6;      // 64
 
     private readonly int _index;
     private readonly string _name;

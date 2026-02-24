@@ -73,7 +73,6 @@ public abstract class CircuitSimulatorBase
                 'l' => Wire.PULLED_LOW,
                 'F' => Wire.FLOATING_HIGH,
                 'f' => Wire.FLOATING_LOW,
-                'S' => Wire.FLOATING,
                 _ => throw new InvalidOperationException($"Invalid character")
             };
         }
@@ -119,7 +118,6 @@ public abstract class CircuitSimulatorBase
                 Wire.PULLED_LOW => "l",
                 Wire.FLOATING_HIGH => "F",
                 Wire.FLOATING_LOW => "f",
-                Wire.FLOATING => "S",
                 _ => throw new InvalidOperationException()
             });
         }
