@@ -26,7 +26,22 @@ public abstract class CircuitSimulatorBase
     private BigInteger _lastChipGroupState = 0;
     private int[] _groupList;
     private int _groupListLastIndex = 0;
-    private int _groupValue;
+
+    [Flags]
+    protected enum GroupState
+    {
+        ContainsNothing = 0,
+        ContainsHi = 1 << 0,
+        ContainsPulldown = 1 << 1,
+        ContainsPullup = 1 << 2,
+        ContainsPwr = 1 << 3,
+        ContainsGnd = 1 << 4,
+
+        ContainsFloatingHi = 1 << 5,
+        ContainsFloatingLo = 1 << 6,
+    }
+
+    private GroupState _groupState;
 
     private ChipLogger _logger;
 
@@ -56,8 +71,6 @@ public abstract class CircuitSimulatorBase
                 '_' => 0,
                 'h' => Wire.PULLED_HIGH,
                 'l' => Wire.PULLED_LOW,
-                'G' => Wire.GROUNDED,
-                'H' => Wire.HIGH,
                 'F' => Wire.FLOATING_HIGH,
                 'f' => Wire.FLOATING_LOW,
                 'S' => Wire.FLOATING,
@@ -104,8 +117,6 @@ public abstract class CircuitSimulatorBase
                 0 => "_",
                 Wire.PULLED_HIGH => "h",
                 Wire.PULLED_LOW => "l",
-                Wire.GROUNDED => "G",
-                Wire.HIGH => "H",
                 Wire.FLOATING_HIGH => "F",
                 Wire.FLOATING_LOW => "f",
                 Wire.FLOATING => "S",
@@ -290,44 +301,44 @@ public abstract class CircuitSimulatorBase
 
         _lastChipGroupState++;
         _groupListLastIndex = 0;
-        _groupValue = 0;
+        _groupState = GroupState.ContainsNothing;
 
         AddWireToGroupList(wireIndex);
 
         var newValue = _wires[_groupList[0]].State;
 
-        if ((_groupValue & Wire.GROUNDED) != 0)
-        {
-            newValue = Wire.GROUNDED;
-        }
-        else if ((_groupValue & Wire.HIGH) != 0)
-        {
-            newValue = Wire.HIGH;
-        }
-        else if ((_groupValue & Wire.PULLED_LOW) != 0)
+        if ((_groupState & GroupState.ContainsGnd) != 0)
         {
             newValue = Wire.PULLED_LOW;
         }
-        else if ((_groupValue & Wire.PULLED_HIGH) != 0)
+        else if ((_groupState & GroupState.ContainsPwr) != 0)
         {
             newValue = Wire.PULLED_HIGH;
         }
-        else if ((_groupValue & Wire.FLOATING_LOW) != 0 && (_groupValue & Wire.FLOATING_HIGH) != 0)
+        else if ((_groupState & GroupState.ContainsPulldown) != 0)
+        {
+            newValue = Wire.PULLED_LOW;
+        }
+        else if ((_groupState & GroupState.ContainsPullup) != 0)
+        {
+            newValue = Wire.PULLED_HIGH;
+        }
+        else if ((_groupState & GroupState.ContainsFloatingLo) != 0 && (_groupState & GroupState.ContainsFloatingHi) != 0)
         {
             newValue = CountWireSizes();
         }
-        else if ((_groupValue & Wire.FLOATING_LOW) != 0)
+        else if ((_groupState & GroupState.ContainsFloatingLo) != 0)
         {
             newValue = Wire.FLOATING_LOW;
         }
-        else if ((_groupValue & Wire.FLOATING_HIGH) != 0)
+        else if ((_groupState & GroupState.ContainsFloatingHi) != 0)
         {
             newValue = Wire.FLOATING_HIGH;
         }
 
-        var newHigh = newValue == Wire.HIGH || newValue == Wire.PULLED_HIGH  || newValue == Wire.FLOATING_HIGH;
+        var newHigh = newValue == Wire.PULLED_HIGH  || newValue == Wire.FLOATING_HIGH;
 
-        _logger?.SetGroupState(_groupValue, newValue);
+        _logger?.SetGroupState(_groupState, newValue);
 
         for (var i = 0; i < _groupListLastIndex; i++)
         {
@@ -444,27 +455,34 @@ public abstract class CircuitSimulatorBase
 
         if (wireIndex == _gndWireIndex)
         {
-            _groupValue |= Wire.GROUNDED;
+            _groupState |= GroupState.ContainsGnd;
             return;
         }
         else if (wireIndex == _vccWireIndex)
         {
-            _groupValue |= Wire.HIGH;
+            _groupState |= GroupState.ContainsPwr;
             return;
         }
 
         var wire = _wires[wireIndex];
 
         // Wire.Pulled is 0, 1, or 2
-        _groupValue |= wire.Pulled;
+        if (wire.Pulled == Wire.PULLED_HIGH)
+        {
+            _groupState |= GroupState.ContainsPullup;
+        }
+        else if (wire.Pulled == Wire.PULLED_LOW)
+        {
+            _groupState |= GroupState.ContainsPulldown;
+        }
 
         if (wire.State == Wire.FLOATING_LOW)
         {
-            _groupValue |= Wire.FLOATING_LOW;
+            _groupState |= GroupState.ContainsFloatingLo;
         }
         else if (wire.State == Wire.FLOATING_HIGH)
         {
-            _groupValue |= Wire.FLOATING_HIGH;
+            _groupState |= GroupState.ContainsFloatingHi;
         }
 
         foreach (var transIndex in wire.CTIndices)
@@ -538,11 +556,11 @@ public abstract class CircuitSimulatorBase
         else
         {
             var state = wire.State;
-            if (state == Wire.GROUNDED || state == Wire.PULLED_LOW)
+            if (state == Wire.PULLED_LOW)
             {
                 wire.State = Wire.FLOATING_LOW;
             }
-            if (state == Wire.HIGH || state == Wire.PULLED_HIGH)
+            if (state == Wire.PULLED_HIGH)
             {
                 wire.State = Wire.FLOATING_HIGH;
             }
@@ -686,8 +704,8 @@ public abstract class CircuitSimulatorBase
         _vccWireIndex = _wireNames["VCC"];
         _gndWireIndex = _wireNames["VSS"];
 
-        _wires[_vccWireIndex].State = Wire.HIGH;
-        _wires[_gndWireIndex].State = Wire.GROUNDED;
+        _wires[_vccWireIndex].State = Wire.PULLED_HIGH;
+        _wires[_gndWireIndex].State = Wire.PULLED_LOW;
 
         foreach (var transInd in _wires[_vccWireIndex].GateIndices)
         {
@@ -745,7 +763,7 @@ public abstract class CircuitSimulatorBase
             _nextNodeTransistorGate = gate;
         }
 
-        public void SetGroupState(int currentGroupState, int newGroupState)
+        public void SetGroupState(GroupState currentGroupState, int newGroupState)
         {
             _currentRecalcNode!.CurrentGroupState = currentGroupState;
             _currentRecalcNode!.NewGroupState = newGroupState;
@@ -864,7 +882,7 @@ public abstract class CircuitSimulatorBase
         {
             public int NodeId => nodeId;
             public List<(int, int?, int)> Group { get; } = [];
-            public int CurrentGroupState { get; set; }
+            public GroupState CurrentGroupState { get; set; }
             public int NewGroupState { get; set; }
             public List<(NmosFet, bool)> AffectedTransistors { get; } = [];
             public List<NmosFet> UnaffectedTransistors { get; } = [];
