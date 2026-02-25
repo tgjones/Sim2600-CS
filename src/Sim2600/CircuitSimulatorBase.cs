@@ -489,7 +489,7 @@ public abstract class CircuitSimulatorBase
             var wire = _wires[_groupList[i]];
 
             var num = wire.CTIndices.Length + wire.GateIndices.Length;
-            if (wire.State == NodeState.Floating || wire.State == NodeState.PulledLow)
+            if (wire.State == NodeState.Floating)
             {
                 countFloatingLow += num;
             }
