@@ -413,9 +413,6 @@ public abstract class CircuitSimulatorBase
 
         transistor.GateState = NmosFet.GATE_LOW;
 
-        var c1Wire = transistor.Side1WireIndex;
-        var c2Wire = transistor.Side2WireIndex;
-
         var wireInd = transistor.Side1WireIndex;
         if (!_newRecalcArray[wireInd])
         {
@@ -702,6 +699,9 @@ public abstract class CircuitSimulatorBase
             }
             else
             {
+                if (s1 == _gndWireIndex) { s1 = s2; s2 = _gndWireIndex; }
+                else if (s1 == _vccWireIndex) { s1 = s2; s2 = _vccWireIndex; }
+
                 _transistors[i] = new NmosFet(i, s1, s2, gate);
             }
         }
