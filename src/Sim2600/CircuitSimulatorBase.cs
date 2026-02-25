@@ -416,9 +416,6 @@ public abstract class CircuitSimulatorBase
         var c1Wire = transistor.Side1WireIndex;
         var c2Wire = transistor.Side2WireIndex;
 
-        FloatWire(c1Wire);
-        FloatWire(c2Wire);
-
         var wireInd = transistor.Side1WireIndex;
         if (!_newRecalcArray[wireInd])
         {
@@ -472,11 +469,11 @@ public abstract class CircuitSimulatorBase
             _groupState |= GroupState.ContainsPulldown;
         }
 
-        if (wire.State == NodeState.FloatingLow)
+        if (wire.State == NodeState.FloatingLow || wire.State == NodeState.PulledLow)
         {
             _groupState |= GroupState.ContainsFloatingLo;
         }
-        else if (wire.State == NodeState.FloatingHigh)
+        else if (wire.State == NodeState.FloatingHigh || wire.State == NodeState.PulledHigh)
         {
             _groupState |= GroupState.ContainsFloatingHi;
         }
