@@ -36,9 +36,6 @@ public abstract class CircuitSimulatorBase
         ContainsPullup = 1 << 2,
         ContainsPwr = 1 << 3,
         ContainsGnd = 1 << 4,
-
-        ContainsFloatingHi = 1 << 5,
-        ContainsFloatingLo = 1 << 6,
     }
 
     private GroupState _groupState;
@@ -299,7 +296,7 @@ public abstract class CircuitSimulatorBase
 
         AddWireToGroupList(wireIndex);
 
-        var newValue = _wires[_groupList[0]].State;
+        var newValue = NodeState.Floating;
 
         if ((_groupState & GroupState.ContainsGnd) != 0)
         {
@@ -317,17 +314,9 @@ public abstract class CircuitSimulatorBase
         {
             newValue = NodeState.PulledHigh;
         }
-        else if ((_groupState & GroupState.ContainsFloatingLo) != 0 && (_groupState & GroupState.ContainsFloatingHi) != 0)
+        else if ((_groupState & GroupState.ContainsHi) != 0)
         {
             newValue = CountWireSizes();
-        }
-        else if ((_groupState & GroupState.ContainsFloatingLo) != 0)
-        {
-            newValue = NodeState.Floating;
-        }
-        else if ((_groupState & GroupState.ContainsFloatingHi) != 0)
-        {
-            newValue = NodeState.PulledHigh;
         }
 
         var newHigh = newValue == NodeState.PulledHigh;
@@ -441,14 +430,9 @@ public abstract class CircuitSimulatorBase
         {
             _groupState |= GroupState.ContainsPulldown;
         }
-
-        if (wire.State == NodeState.Floating || wire.State == NodeState.PulledLow)
-        {
-            _groupState |= GroupState.ContainsFloatingLo;
-        }
         else if (wire.State == NodeState.PulledHigh)
         {
-            _groupState |= GroupState.ContainsFloatingHi;
+            _groupState |= GroupState.ContainsHi;
         }
 
         foreach (var transIndex in wire.CTIndices)
