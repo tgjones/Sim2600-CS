@@ -841,7 +841,7 @@ public abstract class CircuitSimulatorBase
 
         private string GetNodeName(int nodeId)
         {
-            return nodeId.ToString();
+            return $"({nodeId})";
         }
 
         private void WriteLine(string line)
