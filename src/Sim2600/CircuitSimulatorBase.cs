@@ -68,7 +68,6 @@ public abstract class CircuitSimulatorBase
 
             wire.State = state[index++] switch
             {
-                '_' => NodeState.Floating,
                 'l' => NodeState.PulledLow,
                 'h' => NodeState.PulledHigh,
                 'f' => NodeState.FloatingLow,
@@ -115,7 +114,6 @@ public abstract class CircuitSimulatorBase
             {
                 NodeState.PulledLow => "l",
                 NodeState.PulledHigh => "h",
-                NodeState.Floating => '_',
                 NodeState.FloatingLow => "f",
                 NodeState.FloatingHigh => "F",
                 _ => throw new InvalidOperationException()
